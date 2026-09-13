@@ -29,6 +29,11 @@ dotnet build -c Release
 
 The executable is at `bin/Release/net10.0/uepak.exe`.
 
+## Install
+
+Prebuilt Windows binaries are on the [Releases](../../releases) page — a single `uepak.exe`
+(framework-dependent, needs the [.NET 10 runtime](https://dotnet.microsoft.com/download) installed).
+
 ## Usage
 
 ```
@@ -115,6 +120,14 @@ uepak dumpworld MyGame/Content/Maps/City/City out/city.json out/city_meshes
 
 Long-running commands print `PROGRESS:` lines and a final `DONE:` summary with ok/fail counts;
 per-file failures are logged and skipped rather than aborting the run.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Success |
+| `1` | Usage error (bad/missing arguments, unknown command) |
+| `2` | Runtime failure (mount failed, asset not found, decode error, or a bulk command had per-file failures) |
 
 ## Notes
 
