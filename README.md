@@ -62,7 +62,7 @@ On startup the tool prints `Mounted: Files.Count=… UnloadedVfs=…`. A non-zer
 |---|---|
 | `list [filter]` | List asset paths, optionally filtered by case-insensitive substring |
 | `export <assetPath> <outFile>` | Save one asset's raw (decrypted, decompressed) bytes |
-| `exportall [outDir]` | Save every mounted file, preserving folder structure (default `GAMEDecrypted/`) |
+| `exportall [outDir] [filter]` | Save every mounted file, preserving folder structure (default `GAMEDecrypted/`), optionally filtered by case-insensitive substring |
 
 **Conversion** — uses CUE4Parse-Conversion's exporters, so output matches FModel's bulk export
 

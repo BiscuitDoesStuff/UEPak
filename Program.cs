@@ -41,10 +41,12 @@ if (args.Length == 0 || paksDir == null || isHelp)
 
         Options may also be given as env vars UEPAK_PAKS / _KEY / _USMAP / _UE.
 
+          --help, -h, help                       print this usage and exit
+
         Browse / raw extraction
           list [filter]                          list asset paths (case-insensitive substring filter)
           export <assetPath> <outFile>           save one asset's raw bytes
-          exportall [outDir]                     save every mounted file, preserving folder structure
+          exportall [outDir] [filter]            save every mounted file, preserving folder structure
 
         Conversion (same exporters FModel uses)
           exportconverted <outDir> [filter]      every file to its native format: textures->PNG, meshes->.psk/.pskx,
@@ -146,8 +148,9 @@ switch (args[0])
     case "exportall":
     {
         var outDir = args.Length > 1 ? args[1] : "GAMEDecrypted";
+        var filter = args.Length > 2 ? args[2] : null;
         Directory.CreateDirectory(outDir);
-        var all = provider.Files.ToList();
+        var all = provider.Files.Where(kv => filter == null || kv.Key.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
         Console.WriteLine($"Exporting {all.Count} files to {Path.GetFullPath(outDir)} ...");
         int ok = 0, fail = 0;
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -626,7 +629,7 @@ switch (args[0])
         // base UTexture (not UTexture2D specifically) since TextureExporter
         // itself takes UTexture -- covers UTexture2D, UTextureCube,
         // UTexture2DArray, etc. without needing a separate code path per type.
-        if (args.Length < 3) { Console.WriteLine("Usage: exporttexture <assetPath> <outFile.png>"); return 1; }
+        if (args.Length < 3) { Console.WriteLine("Usage: exporttexture <assetPath> <outDir>"); return 1; }
         var path = args[1];
         var outDir = args[2];
         var texture = provider.LoadPackageObject<CUE4Parse.UE4.Assets.Exports.Texture.UTexture>(path);
@@ -864,6 +867,7 @@ switch (args[0])
         if (cultureToTry != null)
         {
             Console.WriteLine($"Setting culture to: {cultureToTry}");
+            // InternationalizationDictionary.Culture has no public setter in CUE4Parse 1.2.2 -- reflection is the only way in.
             var setter = intl.GetType().GetMethod("set_Culture");
             setter?.Invoke(intl, new object[] { cultureToTry });
         }
@@ -871,6 +875,7 @@ switch (args[0])
 
         var filter = args.Length > 1 ? args[1] : null;
         int shown = 0;
+        var truncated = false;
         foreach (var (ns, table) in intl)
         {
             foreach (var (key, value) in table)
@@ -882,10 +887,11 @@ switch (args[0])
                     continue;
                 Console.WriteLine($"  [{ns}] {key} = \"{value}\"");
                 shown++;
-                if (shown >= 200) { Console.WriteLine("  ...(truncated at 200)"); goto done; }
+                if (shown >= 200) { truncated = true; break; }
             }
+            if (truncated) break;
         }
-        done:
+        if (truncated) Console.WriteLine("  ...(truncated at 200)");
         Console.WriteLine($"Shown: {shown}");
         break;
     }
