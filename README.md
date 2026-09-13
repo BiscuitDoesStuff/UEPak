@@ -1,4 +1,4 @@
-# uepak
+# Unreal Engine Package Extractor (UEPak)
 
 [![build](https://github.com/BiscuitDoesStuff/uepak/actions/workflows/build.yml/badge.svg)](https://github.com/BiscuitDoesStuff/uepak/actions/workflows/build.yml)
 
@@ -14,8 +14,8 @@ export every mesh as glTF, decompile every Blueprint, or walk a level's full str
 
 ## Requirements
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/download) (or later; the project rolls forward)
-- A game's `Content/Paks` directory
+- [.NET 10 SDK](https://dotnet.microsoft.com/download) or later
+- A game's decrypted `Content/Paks` directory
 - If the paks are encrypted: the game's AES-256 key as 64 hex characters
 - For UE5 games, to load actual objects (textures, meshes, Blueprints, levels) rather than raw bytes:
   a `.usmap` mappings file for that game build. These are typically generated with
