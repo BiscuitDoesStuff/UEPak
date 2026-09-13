@@ -33,7 +33,8 @@ for (var i = 0; i < args.Length; i++)
 }
 args = rest.ToArray();
 
-if (args.Length == 0 || paksDir == null)
+var isHelp = args.Length > 0 && args[0] is "--help" or "-h" or "help";
+if (args.Length == 0 || paksDir == null || isHelp)
 {
     Console.WriteLine("""
         Usage: uepak --paks <dir> [--key <hex>] [--usmap <file>] [--ue <ver>] <command> [args]
@@ -66,15 +67,38 @@ if (args.Length == 0 || paksDir == null)
 
         Localization
           dumplocres [filter]                    print localized strings
+
+        Exit codes: 0 ok, 1 usage, 2 failure
         """);
-    return;
+    return isHelp ? 0 : 1;
+}
+
+if (!Directory.Exists(paksDir))
+{
+    Console.Error.WriteLine($"ERROR: --paks directory not found: {paksDir}");
+    return 1;
+}
+
+if (aesKey != null && !(aesKey.Length == 64 && aesKey.All(Uri.IsHexDigit)))
+{
+    Console.Error.WriteLine("ERROR: --key must be 64 hex characters");
+    return 1;
+}
+
+if (usmapPath != null && !File.Exists(usmapPath))
+{
+    Console.Error.WriteLine($"ERROR: --usmap file not found: {usmapPath}");
+    return 1;
 }
 
 if (!Enum.TryParse<EGame>("GAME_" + ueVersion, out var game))
 {
     Console.WriteLine($"Unknown --ue version '{ueVersion}'. Valid: " + string.Join(", ", Enum.GetNames<EGame>().Where(n => n.StartsWith("GAME_UE")).Select(n => n[5..])));
-    return;
+    return 1;
 }
+
+try
+{
 
 var provider = new DefaultFileProvider(paksDir, SearchOption.TopDirectoryOnly, new VersionContainer(game));
 provider.Initialize();
@@ -85,6 +109,12 @@ if (usmapPath != null)
 
 Console.WriteLine($"Mounted: Files.Count={provider.Files.Count}, UnloadedVfs={provider.UnloadedVfs.Count}" +
     (provider.UnloadedVfs.Count > 0 && aesKey == null ? "  (some archives are encrypted -- pass --key)" : ""));
+
+if (provider.Files.Count == 0)
+{
+    Console.Error.WriteLine("ERROR: no files mounted" + (provider.UnloadedVfs.Count > 0 && aesKey == null ? " (archives are encrypted -- pass --key)" : ""));
+    return 2;
+}
 
 switch (args[0])
 {
@@ -104,7 +134,7 @@ switch (args[0])
         if (args.Length < 3)
         {
             Console.WriteLine("Usage: export <assetPath> <outFile>");
-            return;
+            return 1;
         }
         var assetPath = args[1];
         var outFile = args[2];
@@ -126,7 +156,7 @@ switch (args[0])
             try
             {
                 var data = provider.SaveAsset(path);
-                var outPath = Path.Combine(outDir, path);
+                var outPath = SafeJoin(outDir, path);
                 Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
                 File.WriteAllBytes(outPath, data);
                 ok++;
@@ -143,7 +173,7 @@ switch (args[0])
             }
         }
         Console.WriteLine($"DONE: ok={ok} fail={fail} of {all.Count} in {sw.Elapsed:mm\\:ss}");
-        break;
+        return fail > 0 ? 2 : 0;
     }
     case "bundle":
     {
@@ -158,7 +188,7 @@ switch (args[0])
         // relative path via LoadPackage(ref).Name (authoritative) with a
         // FixPath()-based best-effort fallback for the rare plugin mount
         // points CUE4Parse can't resolve standalone.
-        if (args.Length < 4) { Console.WriteLine("Usage: bundle <manifestFile> <convertedDir> <bundleOutDir>"); return; }
+        if (args.Length < 4) { Console.WriteLine("Usage: bundle <manifestFile> <convertedDir> <bundleOutDir>"); return 1; }
         var manifestFile = args[1];
         var convertedDir = args[2];
         var bundleOutDir = args[3];
@@ -200,7 +230,7 @@ switch (args[0])
         }).ToList();
 
         Console.WriteLine($"Found {meshRoots.Count} mesh roots to bundle.");
-        int done = 0, resolveFail = 0;
+        int done = 0, resolveFail = 0, capped = 0;
         var usedBundleNames = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var sw = System.Diagnostics.Stopwatch.StartNew();
         foreach (var root in meshRoots)
@@ -233,14 +263,15 @@ switch (args[0])
                     if (!visited.Add(relPath)) continue;
                     CopyAllFilesFor(relPath, thisBundleDir);
                     if (visited.Count < 200) queue.Enqueue(relPath); // depth/size safety cap per bundle
+                    else capped++;
                 }
             }
             done++;
             if (done % 500 == 0)
                 Console.WriteLine($"PROGRESS: {done}/{meshRoots.Count} bundles built (resolveFail={resolveFail}) elapsed={sw.Elapsed:mm\\:ss}");
         }
-        Console.WriteLine($"DONE: {done} bundles built to {bundleOutDir} (resolveFail={resolveFail}) in {sw.Elapsed:mm\\:ss}");
-        break;
+        Console.WriteLine($"DONE: {done} bundles built to {bundleOutDir} (resolveFail={resolveFail} capped={capped}) in {sw.Elapsed:mm\\:ss}");
+        return resolveFail > 0 ? 2 : 0;
     }
     case "manifest":
     {
@@ -255,7 +286,7 @@ switch (args[0])
         // materials, blueprints, actors, worlds, everything, without
         // needing bespoke per-type property parsing. /Script/* imports are
         // class/type definitions (not content dependencies) and excluded.
-        if (args.Length < 2) { Console.WriteLine("Usage: manifest <outFile.json> [pathFilter]"); return; }
+        if (args.Length < 2) { Console.WriteLine("Usage: manifest <outFile.json> [pathFilter]"); return 1; }
         var outFile = args[1];
         var filter = args.Length > 2 ? args[2] : null;
         var graph = new Dictionary<string, List<string>>();
@@ -303,7 +334,7 @@ switch (args[0])
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outFile))!);
         File.WriteAllText(outFile, Newtonsoft.Json.JsonConvert.SerializeObject(graph, Newtonsoft.Json.Formatting.Indented));
         Console.WriteLine($"DONE: {packagesWithRefs} packages with references (of {processed} scanned, {failCount} failed) written to {outFile} in {sw.Elapsed:mm\\:ss}");
-        break;
+        return failCount > 0 ? 2 : 0;
     }
     case "fillgaps":
     {
@@ -317,7 +348,7 @@ switch (args[0])
         // still-compressed bytes directly off the raw pak file and place
         // those instead, so the path exists even though the content isn't
         // real game data.
-        if (args.Length < 3) { Console.WriteLine("Usage: fillgaps <decryptedDir> <convertedDir>"); return; }
+        if (args.Length < 3) { Console.WriteLine("Usage: fillgaps <decryptedDir> <convertedDir>"); return 1; }
         var decryptedDir = args[1];
         var convertedDir = args[2];
         int alreadyThere = 0, copiedFromDecrypted = 0, rawFromPak = 0, rawFromPakFail = 0, processed = 0;
@@ -331,8 +362,8 @@ switch (args[0])
             if (hasAny) { alreadyThere++; }
             else
             {
-                var decryptedPath = Path.Combine(decryptedDir, path);
-                var outPath = Path.Combine(convertedDir, path);
+                var decryptedPath = SafeJoin(decryptedDir, path);
+                var outPath = SafeJoin(convertedDir, path);
                 if (File.Exists(decryptedPath))
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
@@ -376,7 +407,7 @@ switch (args[0])
                 Console.WriteLine($"PROGRESS: {processed}/{provider.Files.Count} (alreadyThere={alreadyThere} copiedFromDecrypted={copiedFromDecrypted} rawFromPak={rawFromPak} rawFromPakFail={rawFromPakFail}) elapsed={sw.Elapsed:mm\\:ss}");
         }
         Console.WriteLine($"DONE: alreadyThere={alreadyThere} copiedFromDecrypted={copiedFromDecrypted} rawFromPak={rawFromPak} rawFromPakFail={rawFromPakFail} of {provider.Files.Count} in {sw.Elapsed:mm\\:ss}");
-        break;
+        return rawFromPakFail > 0 ? 2 : 0;
     }
     case "exportgltf":
     {
@@ -387,7 +418,7 @@ switch (args[0])
         // packages only (StaticMesh/SkinnedAsset/GeometryCollection) since
         // this output exists specifically to be bulk-imported into a new
         // UE project, not as a general archive dump.
-        if (args.Length < 2) { Console.WriteLine("Usage: exportgltf <outDir> [pathFilter]"); return; }
+        if (args.Length < 2) { Console.WriteLine("Usage: exportgltf <outDir> [pathFilter]"); return 1; }
         var outDir = args[1];
         var filter = args.Length > 2 ? args[2] : null;
         var options = ExportOpts(EMeshFormat.Gltf2);
@@ -450,7 +481,7 @@ switch (args[0])
         }
         await FlushBatchAsync();
         Console.WriteLine($"DONE: exported {exportedTotal} file(s) to {outDir} ({queuedMesh} meshes queued, {processed} scanned, {packageLoadFail} loadFail, {skippedExisting} skipped) in {sw.Elapsed:mm\\:ss}");
-        break;
+        return packageLoadFail > 0 ? 2 : 0;
     }
     case "exportconverted":
     {
@@ -467,7 +498,7 @@ switch (args[0])
         // uses for unsupported types. See ExportSession.Add(UObject) in
         // CUE4Parse-Conversion/ExportSession.cs for the exact dispatch table
         // this mirrors.
-        if (args.Length < 2) { Console.WriteLine("Usage: exportconverted <outDir> [pathFilter]"); return; }
+        if (args.Length < 2) { Console.WriteLine("Usage: exportconverted <outDir> [pathFilter]"); return 1; }
         var outDir = args[1];
         var filter = args.Length > 2 ? args[2] : null;
         var options = ExportOpts(EMeshFormat.ActorX);
@@ -583,7 +614,7 @@ switch (args[0])
         });
         var results = await session.RunAsync(outDir, options, progress, CancellationToken.None);
         Console.WriteLine($"DONE: exported {results.Count} file(s) to {outDir} in {sw.Elapsed:mm\\:ss}");
-        break;
+        return packageLoadFail > 0 ? 2 : 0;
     }
     case "exporttexture":
     {
@@ -595,7 +626,7 @@ switch (args[0])
         // base UTexture (not UTexture2D specifically) since TextureExporter
         // itself takes UTexture -- covers UTexture2D, UTextureCube,
         // UTexture2DArray, etc. without needing a separate code path per type.
-        if (args.Length < 3) { Console.WriteLine("Usage: exporttexture <assetPath> <outFile.png>"); return; }
+        if (args.Length < 3) { Console.WriteLine("Usage: exporttexture <assetPath> <outFile.png>"); return 1; }
         var path = args[1];
         var outDir = args[2];
         var texture = provider.LoadPackageObject<CUE4Parse.UE4.Assets.Exports.Texture.UTexture>(path);
@@ -615,7 +646,7 @@ switch (args[0])
         // For Blueprint-heavy games this is where the gameplay logic lives:
         // visual-scripted logic compiled into the pak files themselves, not
         // the (engine-generic) main executable.
-        if (args.Length < 2) { Console.WriteLine("Usage: decompileblueprints <outDir> [pathFilter]"); return; }
+        if (args.Length < 2) { Console.WriteLine("Usage: decompileblueprints <outDir> [pathFilter]"); return 1; }
         var outDir = args[1];
         var filter = args.Length > 2 ? args[2] : null;
         int processed = 0, decompiled = 0, fail = 0;
@@ -646,7 +677,7 @@ switch (args[0])
                 cpp = System.Text.RegularExpressions.Regex.Replace(cpp, @"K2Node_DynamicCast_([A-Za-z0-9_]+)", "$1");
                 cpp = System.Text.RegularExpressions.Regex.Replace(cpp, @"K2Node_([A-Za-z0-9_]+)", "$1");
 
-                var outPath = Path.Combine(outDir, path.Replace(".uasset", ".cpp"));
+                var outPath = SafeJoin(outDir, Path.ChangeExtension(path, ".cpp"));
                 Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
                 File.WriteAllText(outPath, cpp);
                 decompiled++;
@@ -656,16 +687,21 @@ switch (args[0])
                 Console.WriteLine($"PROGRESS: {processed} scanned (decompiled={decompiled} fail={fail}) elapsed={sw.Elapsed:mm\\:ss}");
         }
         Console.WriteLine($"DONE: decompiled={decompiled} fail={fail} of {processed} packages scanned in {sw.Elapsed:mm\\:ss}");
-        break;
+        return fail > 0 ? 2 : 0;
     }
     case "dumplevel":
     {
         // Inspect how actor placement is stored in a .umap package: class,
         // transform, mesh reference. Useful before writing level-reconstruction
         // code against a guess.
-        if (args.Length < 2) { Console.WriteLine("Usage: dumplevel <mapPath> [maxActors] [classFilter]"); return; }
+        if (args.Length < 2) { Console.WriteLine("Usage: dumplevel <mapPath> [maxActors] [classFilter]"); return 1; }
         var path = args[1];
-        var maxActors = args.Length > 2 ? int.Parse(args[2]) : 5;
+        var maxActors = 5;
+        if (args.Length > 2 && !int.TryParse(args[2], out maxActors))
+        {
+            Console.WriteLine($"Usage: dumplevel <mapPath> [maxActors] [classFilter] -- '{args[2]}' is not a number");
+            return 1;
+        }
         var classFilter = args.Length > 3 ? args[3] : null;
         var pkg = provider.LoadPackage(path);
         Console.WriteLine($"ExportMapLength={pkg.ExportMapLength}");
@@ -726,12 +762,12 @@ switch (args[0])
         // generic tagged-property system) and LevelInstance/packed-Blueprint
         // sub-actors recursively. This is a completely different, far more
         // complete path than the StaticMeshActor-only dumpplacements approach.
-        if (args.Length < 3) { Console.WriteLine("Usage: exportworld <mapPath> <outDir>"); return; }
+        if (args.Length < 3) { Console.WriteLine("Usage: exportworld <mapPath> <outDir>"); return 1; }
         var path = args[1];
         var outDir = args[2];
         var pkg = provider.LoadPackage(path);
         var worldExport = pkg.GetExports().FirstOrDefault(e => e.Class?.Name.ToString() == "World");
-        if (worldExport == null) { Console.WriteLine("No UWorld export found in package"); return; }
+        if (worldExport == null) { Console.WriteLine("No UWorld export found in package"); return 2; }
         Console.WriteLine($"Found World export: {worldExport.Name} (CLR type={worldExport.GetType().FullName})");
         var options = ExportOpts(EMeshFormat.USD, exportMaterials: true);
         var session = new CUE4Parse_Conversion.ExportSession(null!) { MaxDegreeOfParallelism = 1 };
@@ -744,7 +780,7 @@ switch (args[0])
     {
         // Full level graph -> JSON, resolving Blueprint SCS templates for the
         // ISM geometry `exportworld` can drop. See WorldDump.cs.
-        if (args.Length < 3) { Console.WriteLine("Usage: dumpworld <mapPath> <outFile.json> [meshOutDir]  -- meshOutDir: also export every referenced mesh as USD with materials/textures"); return; }
+        if (args.Length < 3) { Console.WriteLine("Usage: dumpworld <mapPath> <outFile.json> [meshOutDir]  -- meshOutDir: also export every referenced mesh as USD with materials/textures"); return 1; }
         WorldDump.Run(provider, args[1], args[2], args.Length > 3 ? args[3] : null);
         break;
     }
@@ -757,7 +793,7 @@ switch (args[0])
         // serialized transform data here, since that geometry is generated
         // at runtime when the construction script executes. Use `dumpworld`
         // for the full picture.
-        if (args.Length < 3) { Console.WriteLine("Usage: dumpplacements <mapPath> <outFile.json>"); return; }
+        if (args.Length < 3) { Console.WriteLine("Usage: dumpplacements <mapPath> <outFile.json>"); return 1; }
         var path = args[1];
         var outFile = args[2];
         var pkg = provider.LoadPackage(path);
@@ -803,7 +839,7 @@ switch (args[0])
     }
     case "dumpexports":
     {
-        if (args.Length < 2) { Console.WriteLine("Usage: dumpexports <pkgPath>"); return; }
+        if (args.Length < 2) { Console.WriteLine("Usage: dumpexports <pkgPath>"); return 1; }
         var path = args[1];
         var pkg = provider.LoadPackage(path);
         Console.WriteLine($"ExportMapLength={pkg.ExportMapLength}");
@@ -855,8 +891,17 @@ switch (args[0])
     }
     default:
         Console.WriteLine($"Unknown command: {args[0]}");
-        break;
+        return 1;
 }
+
+}
+catch (Exception e)
+{
+    Console.Error.WriteLine($"ERROR: {e.GetType().Name}: {e.Message}");
+    return 2;
+}
+
+return 0;
 
 static ExportOptions ExportOpts(EMeshFormat meshFormat, bool exportMaterials = false) => new(
     meshFormat, ENaniteMeshFormat.NaniteFirst, EMeshQuality.Highest, ETexturePlatform.DesktopMobile, ETextureFormat.Png,
@@ -876,4 +921,12 @@ static bool IsMeshExport(object export)
         }
     }
     return false;
+}
+
+static string SafeJoin(string root, string relative)
+{
+    var full = Path.GetFullPath(Path.Combine(root, relative));
+    var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+    return full.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase) ? full
+        : throw new InvalidOperationException($"refusing to write outside {root}: {relative}");
 }
