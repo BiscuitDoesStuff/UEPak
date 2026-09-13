@@ -1,6 +1,6 @@
 # uepak
 
-[![build](https://github.com/BiscuitDoesStuff/uepak/actions/workflows/build.yml/badge.svg)](https://github.com/BiscuitDoesStuff/uepak/actions/workflows/build.yml)
+[![build](https://github.com/BiscuitDoesStuff/AESKeyTool/actions/workflows/build.yml/badge.svg)](https://github.com/BiscuitDoesStuff/AESKeyTool/actions/workflows/build.yml)
 
 Command-line extractor and converter for Unreal Engine `.pak` archives, built directly on
 [CUE4Parse](https://github.com/FabianFG/CUE4Parse) — the same library that powers

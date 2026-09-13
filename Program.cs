@@ -101,7 +101,6 @@ if (!Enum.TryParse<EGame>("GAME_" + ueVersion, out var game))
 
 try
 {
-
 var provider = new DefaultFileProvider(paksDir, SearchOption.TopDirectoryOnly, new VersionContainer(game));
 provider.Initialize();
 if (aesKey != null)
@@ -365,17 +364,17 @@ switch (args[0])
             if (hasAny) { alreadyThere++; }
             else
             {
-                var decryptedPath = SafeJoin(decryptedDir, path);
-                var outPath = SafeJoin(convertedDir, path);
-                if (File.Exists(decryptedPath))
+                try
                 {
-                    Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
-                    File.Copy(decryptedPath, outPath, overwrite: true);
-                    copiedFromDecrypted++;
-                }
-                else
-                {
-                    try
+                    var decryptedPath = SafeJoin(decryptedDir, path);
+                    var outPath = SafeJoin(convertedDir, path);
+                    if (File.Exists(decryptedPath))
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
+                        File.Copy(decryptedPath, outPath, overwrite: true);
+                        copiedFromDecrypted++;
+                    }
+                    else
                     {
                         var fpe = (FPakEntry)entry;
                         var pakPath = fpe.Vfs.ToString()!;
@@ -399,11 +398,11 @@ switch (args[0])
                         File.WriteAllBytes(outPath, buf);
                         rawFromPak++;
                     }
-                    catch (Exception e)
-                    {
-                        rawFromPakFail++;
-                        Console.WriteLine($"  FAIL {path} -> {e.GetType().Name}: {e.Message}");
-                    }
+                }
+                catch (Exception e)
+                {
+                    rawFromPakFail++;
+                    Console.WriteLine($"  FAIL {path} -> {e.GetType().Name}: {e.Message}");
                 }
             }
             if (processed % 10000 == 0)
