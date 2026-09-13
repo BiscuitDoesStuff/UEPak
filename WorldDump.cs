@@ -47,7 +47,7 @@ static class WorldDump
 
             // Streaming sublevels: typed list first, class-name scan as fallback.
             var streaming = new List<UObject>();
-            foreach (var sl in world.StreamingLevels) { var o = SafeLoad(sl); if (o != null) streaming.Add(o); }
+            foreach (var sl in world.StreamingLevels ?? []) { var o = SafeLoad(sl); if (o != null) streaming.Add(o); }
             if (streaming.Count == 0)
                 streaming.AddRange(exports.Where(e => (e.Class?.Name.Text ?? "").StartsWith("LevelStreaming")));
             foreach (var sl in streaming)
@@ -71,7 +71,7 @@ static class WorldDump
             }
 
             var level = world.PersistentLevel.Load<ULevel>();
-            var actorIdxs = level?.Actors?.Where(a => a.IsExport).Select(a => a.Index - 1).ToList() ?? new List<int>();
+            var actorIdxs = level?.Actors?.Where(a => a?.IsExport == true).Select(a => a!.Index - 1).ToList() ?? new List<int>();
             Console.WriteLine($"LEVEL {lvlPath}: {actorIdxs.Count} actors");
 
             foreach (var ai in actorIdxs)
@@ -190,17 +190,11 @@ static class WorldDump
         if (meshOutDir != null) ExportMeshes(provider, meshPaths, meshOutDir);
     }
 
-    // USD with materials is the export path that reliably carries textures
-    // through a UE editor import (the glTF pass exports geometry only).
-    static CUE4Parse_Conversion.Options.ExportOptions ExportOpts(CUE4Parse_Conversion.Options.EMeshFormat f, bool exportMaterials) => new(
-        f, CUE4Parse_Conversion.Options.ENaniteMeshFormat.NaniteFirst, CUE4Parse_Conversion.Options.EMeshQuality.Highest,
-        CUE4Parse.UE4.Assets.Exports.Texture.ETexturePlatform.DesktopMobile, CUE4Parse_Conversion.Options.ETextureFormat.Png,
-        100, false, false, CUE4Parse.UE4.Assets.Exports.Material.EMaterialDepth.AllLayers, exportMaterials, false,
-        CUE4Parse_Conversion.Options.ESocketFormat.Bone, CUE4Parse_Conversion.Writers.UEFormat.Enums.EFileCompressionFormat.None);
-
     static void ExportMeshes(DefaultFileProvider provider, IEnumerable<string> meshPaths, string outDir)
     {
-        var options = ExportOpts(CUE4Parse_Conversion.Options.EMeshFormat.USD, exportMaterials: true);
+        // USD with materials is the export path that reliably carries textures
+        // through a UE editor import (the glTF pass exports geometry only).
+        var options = Exporting.Options(CUE4Parse_Conversion.Options.EMeshFormat.USD, exportMaterials: true);
         var session = new CUE4Parse_Conversion.ExportSession(null!) { MaxDegreeOfParallelism = 4 };
         int queued = 0, failed = 0;
         foreach (var mp in meshPaths.Distinct())

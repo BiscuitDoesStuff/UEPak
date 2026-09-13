@@ -195,7 +195,7 @@ switch (args[0])
         var manifestFile = args[1];
         var convertedDir = args[2];
         var bundleOutDir = args[3];
-        var manifest = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, List<string>>>(File.ReadAllText(manifestFile))!;
+        var manifest = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, List<string>>>(File.ReadAllText(manifestFile))!;
 
         string? ResolveRefToRelPath(string reference)
         {
@@ -313,13 +313,13 @@ switch (args[0])
                     // to the outermost import and read ITS ObjectName.
                     var current = imp;
                     var steps = 0;
-                    while (!current.OuterIndex.IsNull && current.OuterIndex.IsImport && steps++ < 64)
+                    while (current is { OuterIndex.IsNull: false, OuterIndex.IsImport: true } && steps++ < 64)
                     {
                         var idx = -current.OuterIndex.Index - 1;
                         if (idx < 0 || idx >= pkg.ImportMap.Length) break;
                         current = pkg.ImportMap[idx];
                     }
-                    var pn = current.ObjectName.Text;
+                    var pn = current?.ObjectName.Text;
                     if (string.IsNullOrEmpty(pn) || pn == "None" || pn.StartsWith("/Script/")) continue;
                     refs.Add(pn);
                 }
@@ -335,7 +335,7 @@ switch (args[0])
                 Console.WriteLine($"PROGRESS: {processed} scanned (withRefs={packagesWithRefs} fail={failCount}) elapsed={sw.Elapsed:mm\\:ss}");
         }
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outFile))!);
-        File.WriteAllText(outFile, Newtonsoft.Json.JsonConvert.SerializeObject(graph, Newtonsoft.Json.Formatting.Indented));
+        File.WriteAllText(outFile, System.Text.Json.JsonSerializer.Serialize(graph, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
         Console.WriteLine($"DONE: {packagesWithRefs} packages with references (of {processed} scanned, {failCount} failed) written to {outFile} in {sw.Elapsed:mm\\:ss}");
         return failCount > 0 ? 2 : 0;
     }
@@ -424,7 +424,7 @@ switch (args[0])
         if (args.Length < 2) { Console.WriteLine("Usage: exportgltf <outDir> [pathFilter]"); return 1; }
         var outDir = args[1];
         var filter = args.Length > 2 ? args[2] : null;
-        var options = ExportOpts(EMeshFormat.Gltf2);
+        var options = Exporting.Options(EMeshFormat.Gltf2);
         const int BatchSize = 250;
         var dop = Math.Min(4, Environment.ProcessorCount);
 
@@ -504,7 +504,7 @@ switch (args[0])
         if (args.Length < 2) { Console.WriteLine("Usage: exportconverted <outDir> [pathFilter]"); return 1; }
         var outDir = args[1];
         var filter = args.Length > 2 ? args[2] : null;
-        var options = ExportOpts(EMeshFormat.ActorX);
+        var options = Exporting.Options(EMeshFormat.ActorX);
         var session = new CUE4Parse_Conversion.ExportSession(null!)
         {
             MaxDegreeOfParallelism = Environment.ProcessorCount
@@ -633,7 +633,7 @@ switch (args[0])
         var path = args[1];
         var outDir = args[2];
         var texture = provider.LoadPackageObject<CUE4Parse.UE4.Assets.Exports.Texture.UTexture>(path);
-        var options = ExportOpts(EMeshFormat.ActorX);
+        var options = Exporting.Options(EMeshFormat.ActorX);
         var session = new CUE4Parse_Conversion.ExportSession(null!);
         session.Add(texture);
         var progress = new Progress<CUE4Parse_Conversion.ExportProgress>();
@@ -772,7 +772,7 @@ switch (args[0])
         var worldExport = pkg.GetExports().FirstOrDefault(e => e.Class?.Name.ToString() == "World");
         if (worldExport == null) { Console.WriteLine("No UWorld export found in package"); return 2; }
         Console.WriteLine($"Found World export: {worldExport.Name} (CLR type={worldExport.GetType().FullName})");
-        var options = ExportOpts(EMeshFormat.USD, exportMaterials: true);
+        var options = Exporting.Options(EMeshFormat.USD, exportMaterials: true);
         var session = new CUE4Parse_Conversion.ExportSession(null!) { MaxDegreeOfParallelism = 1 };
         session.Add(worldExport);
         var results = await session.RunAsync(outDir, options, null, CancellationToken.None);
@@ -908,10 +908,6 @@ catch (Exception e)
 }
 
 return 0;
-
-static ExportOptions ExportOpts(EMeshFormat meshFormat, bool exportMaterials = false) => new(
-    meshFormat, ENaniteMeshFormat.NaniteFirst, EMeshQuality.Highest, ETexturePlatform.DesktopMobile, ETextureFormat.Png,
-    100, false, false, EMaterialDepth.AllLayers, exportMaterials, false, ESocketFormat.Bone, EFileCompressionFormat.None);
 
 static bool IsMeshExport(object export)
 {

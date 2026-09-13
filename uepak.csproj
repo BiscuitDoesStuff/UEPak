@@ -9,6 +9,8 @@
     <Nullable>enable</Nullable>
     <RollForward>Major</RollForward>
     <Description>Command-line Unreal Engine .pak extractor and asset converter built on CUE4Parse.</Description>
+    <!-- NU1903: advisory on Microsoft.Bcl.Memory, pulled in transitively by CUE4Parse; not ours to bump. -->
+    <NoWarn>$(NoWarn);NU1903</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
