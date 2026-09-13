@@ -10,14 +10,14 @@ using CUE4Parse_Conversion.Options;
 using CUE4Parse_Conversion.Writers.UEFormat.Enums;
 
 // Global options (any order, before the command) or env vars:
-//   --paks <dir>    AESKEYTOOL_PAKS   directory containing the game's .pak files (required)
-//   --key <hex>     AESKEYTOOL_KEY    AES-256 key as 64 hex chars (omit for unencrypted paks)
-//   --usmap <file>  AESKEYTOOL_USMAP  .usmap mappings (needed to load UE5 unversioned-property assets)
-//   --ue <ver>      AESKEYTOOL_UE     engine version, e.g. UE5_5 (default), UE4_27, UE5_3
-string? paksDir = Environment.GetEnvironmentVariable("AESKEYTOOL_PAKS");
-string? aesKey = Environment.GetEnvironmentVariable("AESKEYTOOL_KEY");
-string? usmapPath = Environment.GetEnvironmentVariable("AESKEYTOOL_USMAP");
-string ueVersion = Environment.GetEnvironmentVariable("AESKEYTOOL_UE") ?? "UE5_5";
+//   --paks <dir>    UEPAK_PAKS   directory containing the game's .pak files (required)
+//   --key <hex>     UEPAK_KEY    AES-256 key as 64 hex chars (omit for unencrypted paks)
+//   --usmap <file>  UEPAK_USMAP  .usmap mappings (needed to load UE5 unversioned-property assets)
+//   --ue <ver>      UEPAK_UE     engine version, e.g. UE5_5 (default), UE4_27, UE5_3
+string? paksDir = Environment.GetEnvironmentVariable("UEPAK_PAKS");
+string? aesKey = Environment.GetEnvironmentVariable("UEPAK_KEY");
+string? usmapPath = Environment.GetEnvironmentVariable("UEPAK_USMAP");
+string ueVersion = Environment.GetEnvironmentVariable("UEPAK_UE") ?? "UE5_5";
 var rest = new List<string>();
 for (var i = 0; i < args.Length; i++)
 {
@@ -36,9 +36,9 @@ args = rest.ToArray();
 if (args.Length == 0 || paksDir == null)
 {
     Console.WriteLine("""
-        Usage: AESKeyTool --paks <dir> [--key <hex>] [--usmap <file>] [--ue <ver>] <command> [args]
+        Usage: uepak --paks <dir> [--key <hex>] [--usmap <file>] [--ue <ver>] <command> [args]
 
-        Options may also be given as env vars AESKEYTOOL_PAKS / _KEY / _USMAP / _UE.
+        Options may also be given as env vars UEPAK_PAKS / _KEY / _USMAP / _UE.
 
         Browse / raw extraction
           list [filter]                          list asset paths (case-insensitive substring filter)

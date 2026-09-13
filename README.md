@@ -1,4 +1,4 @@
-# AESKeyTool
+# uepak
 
 Command-line extractor and converter for Unreal Engine `.pak` archives, built directly on
 [CUE4Parse](https://github.com/FabianFG/CUE4Parse) — the same library that powers
@@ -6,9 +6,9 @@ Command-line extractor and converter for Unreal Engine `.pak` archives, built di
 awkward through a GUI: decrypt and dump an entire game's files, convert everything to open formats,
 export every mesh as glTF, decompile every Blueprint, or walk a level's full streaming graph into JSON.
 
-> **What it is not.** Despite the name, this tool does **not** find or ship AES keys. You supply the
-> key for the game you are working with. Extracted assets remain the property of their copyright
-> holders; use this for modding, research, and personal projects in line with the game's terms.
+> **What it is not.** This tool does **not** find or ship AES keys. You supply the key for the game
+> you are working with. Extracted assets remain the property of their copyright holders; use this
+> for modding, research, and personal projects in line with the game's terms.
 
 ## Requirements
 
@@ -27,28 +27,28 @@ export every mesh as glTF, decompile every Blueprint, or walk a level's full str
 dotnet build -c Release
 ```
 
-The executable is at `bin/Release/net10.0/AESKeyTool.exe`.
+The executable is at `bin/Release/net10.0/uepak.exe`.
 
 ## Usage
 
 ```
-AESKeyTool --paks <dir> [--key <hex>] [--usmap <file>] [--ue <ver>] <command> [args]
+uepak --paks <dir> [--key <hex>] [--usmap <file>] [--ue <ver>] <command> [args]
 ```
 
 | Option | Env var | Meaning |
 |---|---|---|
-| `--paks <dir>` | `AESKEYTOOL_PAKS` | Directory containing the `.pak` files (required) |
-| `--key <hex>` | `AESKEYTOOL_KEY` | AES-256 key, 64 hex chars. Omit for unencrypted games |
-| `--usmap <file>` | `AESKEYTOOL_USMAP` | `.usmap` type mappings |
-| `--ue <ver>` | `AESKEYTOOL_UE` | Engine version: `UE5_5` (default), `UE4_27`, `UE5_3`, … |
+| `--paks <dir>` | `UEPAK_PAKS` | Directory containing the `.pak` files (required) |
+| `--key <hex>` | `UEPAK_KEY` | AES-256 key, 64 hex chars. Omit for unencrypted games |
+| `--usmap <file>` | `UEPAK_USMAP` | `.usmap` type mappings |
+| `--ue <ver>` | `UEPAK_UE` | Engine version: `UE5_5` (default), `UE4_27`, `UE5_3`, … |
 
 Set the env vars once and every command becomes short:
 
 ```bash
-export AESKEYTOOL_PAKS="C:/Games/MyGame/MyGame/Content/Paks"
-export AESKEYTOOL_KEY=0123...abcd
-export AESKEYTOOL_USMAP="C:/Games/MyGame/MyGame.usmap"
-AESKeyTool list Weapons/
+export UEPAK_PAKS="C:/Games/MyGame/MyGame/Content/Paks"
+export UEPAK_KEY=0123...abcd
+export UEPAK_USMAP="C:/Games/MyGame/MyGame.usmap"
+uepak list Weapons/
 ```
 
 On startup the tool prints `Mounted: Files.Count=… UnloadedVfs=…`. A non-zero `UnloadedVfs` with
@@ -103,14 +103,14 @@ Asset paths are pak-relative, e.g. `MyGame/Content/Maps/City/City` (extension op
 ### Typical pipeline
 
 ```bash
-AESKeyTool exportall      out/raw          # 1. raw decrypted files
-AESKeyTool exportconverted out/converted   # 2. everything in open formats
-AESKeyTool fillgaps       out/raw out/converted
-AESKeyTool manifest       out/manifest.json
-AESKeyTool bundle         out/manifest.json out/converted out/bundles
-AESKeyTool exportgltf     out/gltf         # meshes for re-import into UE5
-AESKeyTool decompileblueprints out/blueprints
-AESKeyTool dumpworld MyGame/Content/Maps/City/City out/city.json out/city_meshes
+uepak exportall      out/raw          # 1. raw decrypted files
+uepak exportconverted out/converted   # 2. everything in open formats
+uepak fillgaps       out/raw out/converted
+uepak manifest       out/manifest.json
+uepak bundle         out/manifest.json out/converted out/bundles
+uepak exportgltf     out/gltf         # meshes for re-import into UE5
+uepak decompileblueprints out/blueprints
+uepak dumpworld MyGame/Content/Maps/City/City out/city.json out/city_meshes
 ```
 
 Long-running commands print `PROGRESS:` lines and a final `DONE:` summary with ok/fail counts;
