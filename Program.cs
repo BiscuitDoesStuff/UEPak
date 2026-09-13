@@ -708,11 +708,9 @@ switch (args[0])
         var classFilter = args.Length > 3 ? args[3] : null;
         var pkg = provider.LoadPackage(path);
         Console.WriteLine($"ExportMapLength={pkg.ExportMapLength}");
-        var byName = new Dictionary<string, CUE4Parse.UE4.Assets.Exports.UObject>();
         var classCounts = new Dictionary<string, int>();
         foreach (var export in pkg.GetExports())
         {
-            byName[export.Name] = export;
             var cls = export.Class?.Name.ToString() ?? "?";
             classCounts[cls] = classCounts.GetValueOrDefault(cls, 0) + 1;
         }
