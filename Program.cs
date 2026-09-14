@@ -122,12 +122,15 @@ switch (args[0])
     case "list":
     {
         var filter = args.Length > 1 ? args[1] : null;
-        var paths = provider.Files.Keys
-            .Where(p => filter == null || p.Contains(filter, StringComparison.OrdinalIgnoreCase))
-            .OrderBy(p => p)
-            .ToList();
-        foreach (var p in paths) Console.WriteLine(p);
-        Console.WriteLine($"-- {paths.Count} matching path(s)");
+        int count = 0;
+        foreach (var p in provider.Files.Keys
+            .Where(p => Helpers.MatchesFilter(p, filter))
+            .OrderBy(p => p))
+        {
+            Console.WriteLine(p);
+            count++;
+        }
+        Console.WriteLine($"-- {count} matching path(s)");
         break;
     }
     case "export":
@@ -149,7 +152,7 @@ switch (args[0])
         var outDir = args.Length > 1 ? args[1] : "GAMEDecrypted";
         var filter = args.Length > 2 ? args[2] : null;
         Directory.CreateDirectory(outDir);
-        var all = provider.Files.Where(kv => filter == null || kv.Key.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
+        var all = provider.Files.Where(kv => Helpers.MatchesFilter(kv.Key, filter)).ToList();
         Console.WriteLine($"Exporting {all.Count} files to {Path.GetFullPath(outDir)} ...");
         int ok = 0, fail = 0;
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -158,7 +161,7 @@ switch (args[0])
             try
             {
                 var data = provider.SaveAsset(path);
-                var outPath = SafeJoin(outDir, path);
+                var outPath = Helpers.SafeJoin(outDir, path);
                 Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
                 File.WriteAllBytes(outPath, data);
                 ok++;
@@ -168,7 +171,7 @@ switch (args[0])
                 fail++;
                 Console.WriteLine($"  FAIL {path} -> {e.GetType().Name}: {e.Message}");
             }
-            if ((ok + fail) % 1000 == 0)
+            if ((ok + fail) % Helpers.ProgressSmall == 0)
             {
                 Console.WriteLine($"PROGRESS: {ok + fail}/{all.Count} (ok={ok} fail={fail}) elapsed={sw.Elapsed:mm\\:ss}");
                 Console.Out.Flush();
@@ -199,14 +202,18 @@ switch (args[0])
         string? ResolveRefToRelPath(string reference)
         {
             try { return provider.LoadPackage(reference).Name; }
-            catch
+            catch (Exception e1)
             {
                 try
                 {
                     var fixedPath = provider.FixPath(reference);
                     return Path.Combine(Path.GetDirectoryName(fixedPath) ?? "", Path.GetFileNameWithoutExtension(fixedPath)).Replace('\\', '/');
                 }
-                catch { return null; }
+                catch (Exception e2)
+                {
+                    Console.Error.WriteLine($"  RESOLVE FAIL {reference} -> LoadPackage: {e1.Message}, FixPath: {e2.Message}");
+                    return null;
+                }
             }
         }
 
@@ -264,7 +271,7 @@ switch (args[0])
                     if (relPath == null) { resolveFail++; continue; }
                     if (!visited.Add(relPath)) continue;
                     CopyAllFilesFor(relPath, thisBundleDir);
-                    if (visited.Count < 200) queue.Enqueue(relPath); // depth/size safety cap per bundle
+                    if (visited.Count < Helpers.BundleNodeCap) queue.Enqueue(relPath); // depth/size safety cap per bundle
                     else capped++;
                 }
             }
@@ -296,7 +303,7 @@ switch (args[0])
         var sw = System.Diagnostics.Stopwatch.StartNew();
         foreach (var (path, entry) in provider.Files)
         {
-            if (filter != null && !path.Contains(filter, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!Helpers.MatchesFilter(path, filter)) continue;
             if (entry.IsUePackagePayload) continue;
             if (!entry.IsUePackage) continue;
             processed++;
@@ -329,8 +336,8 @@ switch (args[0])
                     packagesWithRefs++;
                 }
             }
-            catch (Exception) { failCount++; }
-            if (processed % 10000 == 0)
+            catch (Exception e) { failCount++; Console.Error.WriteLine($"  FAIL {path} -> {e.GetType().Name}: {e.Message}"); }
+            if (processed % Helpers.ProgressLarge == 0)
                 Console.WriteLine($"PROGRESS: {processed} scanned (withRefs={packagesWithRefs} fail={failCount}) elapsed={sw.Elapsed:mm\\:ss}");
         }
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outFile))!);
@@ -353,21 +360,20 @@ switch (args[0])
         if (args.Length < 3) { Console.WriteLine("Usage: fillgaps <decryptedDir> <convertedDir>"); return 1; }
         var decryptedDir = args[1];
         var convertedDir = args[2];
+        Console.WriteLine("Indexing existing converted files...");
+        var existingFiles = FileIndex.Build(convertedDir);
         int alreadyThere = 0, copiedFromDecrypted = 0, rawFromPak = 0, rawFromPakFail = 0, processed = 0;
         var sw = System.Diagnostics.Stopwatch.StartNew();
         foreach (var (path, entry) in provider.Files)
         {
             processed++;
-            var outStemDir = Path.Combine(convertedDir, Path.GetDirectoryName(path) ?? "");
-            var outStem = Path.GetFileNameWithoutExtension(path);
-            var hasAny = Directory.Exists(outStemDir) && Directory.EnumerateFiles(outStemDir, outStem + ".*").Any();
-            if (hasAny) { alreadyThere++; }
+            if (existingFiles.HasAnyFile(path)) { alreadyThere++; }
             else
             {
                 try
                 {
-                    var decryptedPath = SafeJoin(decryptedDir, path);
-                    var outPath = SafeJoin(convertedDir, path);
+                    var decryptedPath = Helpers.SafeJoin(decryptedDir, path);
+                    var outPath = Helpers.SafeJoin(convertedDir, path);
                     if (File.Exists(decryptedPath))
                     {
                         Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
@@ -379,21 +385,23 @@ switch (args[0])
                         var fpe = (FPakEntry)entry;
                         var pakPath = fpe.Vfs.ToString()!;
                         using var fs = new FileStream(pakPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                        long readStart; int readLen;
+                        long readStart, readLen;
                         if (fpe.CompressionBlocks.Length > 0)
                         {
                             readStart = fpe.CompressionBlocks[0].CompressedStart;
-                            readLen = (int)fpe.CompressedSize;
+                            readLen = fpe.CompressedSize;
                         }
                         else
                         {
                             readStart = fpe.Offset + fpe.StructSize;
-                            readLen = (int)fpe.UncompressedSize;
+                            readLen = fpe.UncompressedSize;
                         }
+                        if (readLen > int.MaxValue)
+                            throw new InvalidOperationException($"entry too large to read in one pass ({readLen} bytes)");
                         var buf = new byte[readLen];
                         fs.Seek(readStart, SeekOrigin.Begin);
                         var readTotal = 0;
-                        while (readTotal < readLen) { var n = fs.Read(buf, readTotal, readLen - readTotal); if (n == 0) break; readTotal += n; }
+                        while (readTotal < (int)readLen) { var n = fs.Read(buf, readTotal, (int)readLen - readTotal); if (n == 0) break; readTotal += n; }
                         Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
                         File.WriteAllBytes(outPath, buf);
                         rawFromPak++;
@@ -405,7 +413,7 @@ switch (args[0])
                     Console.WriteLine($"  FAIL {path} -> {e.GetType().Name}: {e.Message}");
                 }
             }
-            if (processed % 10000 == 0)
+            if (processed % Helpers.ProgressLarge == 0)
                 Console.WriteLine($"PROGRESS: {processed}/{provider.Files.Count} (alreadyThere={alreadyThere} copiedFromDecrypted={copiedFromDecrypted} rawFromPak={rawFromPak} rawFromPakFail={rawFromPakFail}) elapsed={sw.Elapsed:mm\\:ss}");
         }
         Console.WriteLine($"DONE: alreadyThere={alreadyThere} copiedFromDecrypted={copiedFromDecrypted} rawFromPak={rawFromPak} rawFromPakFail={rawFromPakFail} of {provider.Files.Count} in {sw.Elapsed:mm\\:ss}");
@@ -424,8 +432,9 @@ switch (args[0])
         var outDir = args[1];
         var filter = args.Length > 2 ? args[2] : null;
         var options = Exporting.Options(EMeshFormat.Gltf2);
-        const int BatchSize = 250;
-        var dop = Math.Min(4, Environment.ProcessorCount);
+        Console.WriteLine("Indexing existing output files...");
+        var existingFiles = FileIndex.Build(outDir);
+        var dop = Math.Min(Helpers.MaxExportDop, Environment.ProcessorCount);
 
         int queuedMesh = 0, skippedExisting = 0, processed = 0, packageLoadFail = 0, exportedTotal = 0;
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -447,14 +456,12 @@ switch (args[0])
 
         foreach (var (path, entry) in provider.Files)
         {
-            if (filter != null && !path.Contains(filter, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!Helpers.MatchesFilter(path, filter)) continue;
             if (entry.IsUePackagePayload) continue;
             if (!entry.IsUePackage) continue;
             processed++;
 
-            var outStemDir = Path.Combine(outDir, Path.GetDirectoryName(path) ?? "");
-            var outStem = Path.GetFileNameWithoutExtension(path);
-            if (Directory.Exists(outStemDir) && Directory.EnumerateFiles(outStemDir, outStem + ".glb").Any())
+            if (existingFiles.HasFileWithExt(path, ".glb"))
             {
                 skippedExisting++;
                 continue;
@@ -465,7 +472,7 @@ switch (args[0])
                 var pkg = provider.LoadPackage(entry);
                 foreach (var export in pkg.GetExports())
                 {
-                    if (!IsMeshExport(export)) continue;
+                    if (!Helpers.IsMeshExport(export)) continue;
                     batch.Add(export);
                     queuedMesh++;
                 }
@@ -476,9 +483,9 @@ switch (args[0])
                 Console.WriteLine($"  PACKAGE LOAD FAIL {path} -> {e.GetType().Name}: {e.Message}");
             }
 
-            if (batch.Count >= BatchSize) await FlushBatchAsync();
+            if (batch.Count >= Helpers.ExportBatchSize) await FlushBatchAsync();
 
-            if (processed % 5000 == 0)
+            if (processed % Helpers.ProgressMedium == 0)
                 Console.WriteLine($"QUEUE PROGRESS: {processed}/{provider.Files.Count} scanned (queuedMesh={queuedMesh} loadFail={packageLoadFail} skipped={skippedExisting} exportedTotal={exportedTotal}) elapsed={sw.Elapsed:mm\\:ss}");
         }
         await FlushBatchAsync();
@@ -504,6 +511,8 @@ switch (args[0])
         var outDir = args[1];
         var filter = args.Length > 2 ? args[2] : null;
         var options = Exporting.Options(EMeshFormat.ActorX);
+        Console.WriteLine("Indexing existing output files...");
+        var existingFiles = FileIndex.Build(outDir);
         var session = new CUE4Parse_Conversion.ExportSession(null!)
         {
             MaxDegreeOfParallelism = Environment.ProcessorCount
@@ -513,7 +522,7 @@ switch (args[0])
         var sw = System.Diagnostics.Stopwatch.StartNew();
         foreach (var (path, entry) in provider.Files)
         {
-            if (filter != null && !path.Contains(filter, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!Helpers.MatchesFilter(path, filter)) continue;
             processed++;
             if (entry.IsUePackagePayload)
                 continue; // .uexp/.ubulk/.uptnl siblings, pulled in automatically with their .uasset
@@ -529,15 +538,10 @@ switch (args[0])
             // non-package files (.ini/.uplugin/etc) are different: raw IS
             // their correct final form, so any existing match means done.
             var isPkg = entry.IsUePackage;
-            var outStemDir = Path.Combine(outDir, Path.GetDirectoryName(path) ?? "");
-            var outStem = Path.GetFileNameWithoutExtension(path);
-            var rawPackageExts = new[] { ".uasset", ".uexp", ".ubulk", ".uptnl" };
-            var alreadyDone = Directory.Exists(outStemDir) && Directory.EnumerateFiles(outStemDir, outStem + ".*")
-                .Any(f => !isPkg || !rawPackageExts.Contains(Path.GetExtension(f).ToLowerInvariant()));
-            if (alreadyDone)
+            if (existingFiles.HasConvertedFile(path, isPkg))
             {
                 skippedExisting++;
-                if (processed % 5000 == 0)
+                if (processed % Helpers.ProgressMedium == 0)
                     Console.WriteLine($"QUEUE PROGRESS: {processed}/{provider.Files.Count} scanned (typed={queuedTyped} audio={queuedAudio} json={queuedJson} raw={queuedRaw} loadFail={packageLoadFail} skipped={skippedExisting}) elapsed={sw.Elapsed:mm\\:ss}");
                 continue;
             }
@@ -600,7 +604,7 @@ switch (args[0])
                 catch { }
             }
 
-            if (processed % 5000 == 0)
+            if (processed % Helpers.ProgressMedium == 0)
                 Console.WriteLine($"QUEUE PROGRESS: {processed}/{provider.Files.Count} scanned (typed={queuedTyped} audio={queuedAudio} json={queuedJson} raw={queuedRaw} loadFail={packageLoadFail} skipped={skippedExisting}) elapsed={sw.Elapsed:mm\\:ss}");
         }
         Console.WriteLine($"Queued: typed={queuedTyped} audio={queuedAudio} json={queuedJson} raw={queuedRaw} packageLoadFail={packageLoadFail} skippedExisting={skippedExisting} of {provider.Files.Count} files scanned in {sw.Elapsed:mm\\:ss}");
@@ -655,7 +659,7 @@ switch (args[0])
         var sw = System.Diagnostics.Stopwatch.StartNew();
         foreach (var (path, entry) in provider.Files)
         {
-            if (filter != null && !path.Contains(filter, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!Helpers.MatchesFilter(path, filter)) continue;
             if (entry.IsUePackagePayload) continue;
             if (!entry.IsUePackage) continue;
             processed++;
@@ -675,17 +679,17 @@ switch (args[0])
                 }
                 if (cppList.Count == 0) continue;
                 var cpp = cppList.Count > 1 ? string.Join("\n\n", cppList) : cppList[0];
-                cpp = System.Text.RegularExpressions.Regex.Replace(cpp, @"CallFunc_([A-Za-z0-9_]+)_ReturnValue", "$1");
-                cpp = System.Text.RegularExpressions.Regex.Replace(cpp, @"K2Node_DynamicCast_([A-Za-z0-9_]+)", "$1");
-                cpp = System.Text.RegularExpressions.Regex.Replace(cpp, @"K2Node_([A-Za-z0-9_]+)", "$1");
+                cpp = Helpers.CallFuncReturnValueRegex().Replace(cpp, "$1");
+                cpp = Helpers.DynamicCastRegex().Replace(cpp, "$1");
+                cpp = Helpers.K2NodeRegex().Replace(cpp, "$1");
 
-                var outPath = SafeJoin(outDir, Path.ChangeExtension(path, ".cpp"));
+                var outPath = Helpers.SafeJoin(outDir, Path.ChangeExtension(path, ".cpp"));
                 Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
                 File.WriteAllText(outPath, cpp);
                 decompiled++;
             }
             catch (Exception e) { fail++; Console.WriteLine($"  FAIL {path} -> {e.GetType().Name}: {e.Message}"); }
-            if (processed % 5000 == 0)
+            if (processed % Helpers.ProgressMedium == 0)
                 Console.WriteLine($"PROGRESS: {processed} scanned (decompiled={decompiled} fail={fail}) elapsed={sw.Elapsed:mm\\:ss}");
         }
         Console.WriteLine($"DONE: decompiled={decompiled} fail={fail} of {processed} packages scanned in {sw.Elapsed:mm\\:ss}");
@@ -866,7 +870,10 @@ switch (args[0])
             Console.WriteLine($"Setting culture to: {cultureToTry}");
             // InternationalizationDictionary.Culture has no public setter in CUE4Parse 1.2.2 -- reflection is the only way in.
             var setter = intl.GetType().GetMethod("set_Culture");
-            setter?.Invoke(intl, new object[] { cultureToTry });
+            if (setter != null)
+                setter.Invoke(intl, new object[] { cultureToTry });
+            else
+                Console.Error.WriteLine("WARNING: could not find Culture setter via reflection; culture unchanged");
         }
         Console.WriteLine($"LocalizedResources dictionary count: {intl.Count}");
 
@@ -884,11 +891,11 @@ switch (args[0])
                     continue;
                 Console.WriteLine($"  [{ns}] {key} = \"{value}\"");
                 shown++;
-                if (shown >= 200) { truncated = true; break; }
+                if (shown >= Helpers.LocresDisplayCap) { truncated = true; break; }
             }
             if (truncated) break;
         }
-        if (truncated) Console.WriteLine("  ...(truncated at 200)");
+        if (truncated) Console.WriteLine($"  ...(truncated at {Helpers.LocresDisplayCap})");
         Console.WriteLine($"Shown: {shown}");
         break;
     }
@@ -906,26 +913,3 @@ catch (Exception e)
 
 return 0;
 
-static bool IsMeshExport(object export)
-{
-    for (var t = export.GetType(); t != null; t = t.BaseType)
-    {
-        switch (t.Name)
-        {
-            case "UStaticMesh":
-            case "USkinnedAsset":
-            case "USkeletalMesh":
-            case "UGeometryCollection":
-                return true;
-        }
-    }
-    return false;
-}
-
-static string SafeJoin(string root, string relative)
-{
-    var full = Path.GetFullPath(Path.Combine(root, relative));
-    var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-    return full.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase) ? full
-        : throw new InvalidOperationException($"refusing to write outside {root}: {relative}");
-}
